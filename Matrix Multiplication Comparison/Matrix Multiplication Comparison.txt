@@ -1,0 +1,119 @@
+%%writefile matrixMultiplicationComparison.cpp
+
+
+#include<iostream>
+#include<chrono>
+#include<iomanip>
+#include<cstdlib>
+#include<ctime>
+#include<omp.h>
+#include<cuda_runtime.h>
+
+#define rows 500
+#define cols 500
+
+using namespace std;
+
+void serialMul(int arr1[rows][cols], int arr2[rows][cols], int arr3[rows][cols])
+{
+    for(int i = 0; i < rows; i++)
+    {
+        for(int j = 0; j < cols; j++)
+        {
+            arr3[i][j] = 0;
+            for(int k = 0; k < cols; k++)
+            {
+                arr3[i][j] += arr1[i][k] * arr2[k][j];
+            }
+        }
+    }
+}
+
+int main()
+{
+    // Initialize matrices for CPU serial and parallel (OpenMP) multiplication
+    int arr1[rows][cols], arr2[rows][cols], arr3_serial[rows][cols], arr3_parallel[rows][cols];
+
+    // Initialize matrices for GPU multiplication
+    int *harr1, *harr2, *harr3, *darr1, *darr2, *darr3;
+    size_t size = rows * cols * sizeof(int);
+
+    harr1 = (int*)malloc(size);
+    harr2 = (int*)malloc(size);
+    harr3 = (int*)malloc(size);
+
+    cudaMalloc(&darr1, size);
+    cudaMalloc(&darr2, size);
+    cudaMalloc(&darr3, size);
+
+    srand(time(0));
+
+    for(int i = 0; i < rows; i++)
+    {
+        for(int j = 0; j < cols; j++)
+        {
+            arr1[i][j] = rand() % 100;
+            arr2[i][j] = rand() % 100;
+            harr1[i * cols + j] = arr1[i][j];
+            harr2[i * cols + j] = arr2[i][j];
+        }
+    }
+
+    // Serial CPU multiplication
+    auto start_serial = chrono::high_resolution_clock::now();
+    serialMul(arr1, arr2, arr3_serial);
+    auto end_serial = chrono::high_resolution_clock::now();
+    chrono::duration<double, milli> duration_serial = end_serial - start_serial;
+
+    // Parallel CPU (OpenMP) multiplication
+    auto start_parallel = chrono::high_resolution_clock::now();
+    #pragma omp parallel for collapse(2)
+    for(int i = 0; i < rows; i++)
+    {
+        for(int j = 0; j < cols; j++)
+        {
+            arr3_parallel[i][j] = 0;
+            for(int k = 0; k < cols; k++)
+            {
+                arr3_parallel[i][j] += arr1[i][k] * arr2[k][j];
+            }
+        }
+    }
+    auto end_parallel = chrono::high_resolution_clock::now();
+    chrono::duration<double, milli> duration_parallel = end_parallel - start_parallel;
+
+    // GPU multiplication
+    cudaMemcpy(darr1, harr1, size, cudaMemcpyHostToDevice);
+    cudaMemcpy(darr2, harr2, size, cudaMemcpyHostToDevice);
+    int threadPerBlock = 256;
+    int blocks = (rows * cols + threadPerBlock - 1) / threadPerBlock;
+    auto start_gpu = chrono::high_resolution_clock::now();
+    gpuMultiplication<<<blocks, threadPerBlock>>>(darr1, darr2, darr3);
+    cudaDeviceSynchronize();
+    auto end_gpu = chrono::high_resolution_clock::now();
+    chrono::duration<double, milli> duration_gpu = end_gpu - start_gpu;
+
+    // Print results and execution times
+    cout << "Serial CPU multiplication:" << endl;
+    cout << "Time taken: " << duration_serial.count() << " milliseconds." << endl;
+
+    cout << "Parallel CPU (OpenMP) multiplication:" << endl;
+    cout << "Time taken: " << duration_parallel.count() << " milliseconds." << endl;
+
+    cout << "GPU multiplication:" << endl;
+    cout << "Time taken: " << duration_gpu.count() << " milliseconds." << endl;
+
+    // Free memory for GPU multiplication
+    cudaFree(darr1);
+    cudaFree(darr2);
+    cudaFree(darr3);
+    free(harr1);
+    free(harr2);
+    free(harr3);
+
+    return 0;
+}
+
+
+execution command: !nvcc matrixMultiplicationComparison.cpp -std=c++11 -Xcompiler -fopenmp
+
